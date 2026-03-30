@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0f1117">
+<title>台股儀表板</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0f1117;--card:#1a1d27;--card2:#222639;--accent:#4f8ef7;--green:#26d97f;--red:#f7525f;--yellow:#f7c948;--text:#e8eaf0;--muted:#8b90a0;--border:#2a2d3e}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;padding-bottom:40px}
+header{background:var(--card);border-bottom:1px solid var(--border);padding:12px 16px;position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-content:space-between}
+header h1{font-size:16px;font-weight:700;color:var(--accent)}
+.badge{font-size:10px;padding:3px 8px;border-radius:20px;background:var(--card2);color:var(--muted)}
+.badge.ok{background:#1a3a2a;color:var(--green)}
+.badge.err{background:#3a1a1a;color:var(--red)}
+.loading-screen{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:200;padding:24px}
+.loading-screen.hidden{display:none}
+.loading-logo{font-size:48px;margin-bottom:16px}
+.loading-title{font-size:18px;font-weight:700;margin-bottom:8px}
+.loading-sub{font-size:12px;color:var(--muted);margin-bottom:24px;text-align:center;line-height:1.8;max-width:300px}
+.loading-bar-wrap{width:280px;height:6px;background:var(--card2);border-radius:4px;overflow:hidden;margin-bottom:10px}
+.loading-bar{height:100%;background:linear-gradient(90deg,var(--accent),var(--green));border-radius:4px;transition:width .4s}
+.loading-label{font-size:11px;color:var(--muted);text-align:center;max-width:280px;min-height:32px;line-height:1.6}
+.loading-err{margin-top:16px;background:#3a1a1a;border:1px solid var(--red);border-radius:8px;padding:12px 16px;font-size:11px;color:var(--red);max-width:320px;line-height:1.6;display:none;white-space:pre-wrap;word-break:break-all}
+.loading-err.show{display:block}
+.retry-btn{margin-top:12px;padding:8px 20px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer}
+.status-bar{background:var(--card2);padding:7px 16px;font-size:11px;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--border);align-items:center}
+.controls{padding:10px 16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.btn{padding:6px 12px;border-radius:8px;border:none;font-size:11px;font-weight:600;cursor:pointer}
+.btn-success{background:#1a3a2a;color:var(--green);border:1px solid #26d97f55}
+.btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border)}
+.range-btns{display:flex;gap:4px;margin-left:auto}
+.range-btn{padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:11px;cursor:pointer}
+.range-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.cards{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;padding:0 16px 14px}
+@media(min-width:600px){.cards{grid-template-columns:repeat(4,1fr)}}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;position:relative;overflow:hidden}
+.card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+.card.blue::before{background:var(--accent)}.card.green::before{background:var(--green)}.card.red::before{background:var(--red)}.card.yellow::before{background:var(--yellow)}
+.card-label{font-size:10px;color:var(--muted);margin-bottom:6px}
+.card-value{font-size:20px;font-weight:700}
+.card-change{font-size:11px;margin-top:3px}
+.up{color:var(--red)}.down{color:var(--green)}.neutral{color:var(--muted)}
+.tabs{display:flex;padding:0 16px;border-bottom:1px solid var(--border);overflow-x:auto}
+.tab{padding:10px 16px;font-size:12px;color:var(--muted);cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab-content{display:none;padding:16px}
+.tab-content.active{display:block}
+.chart-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px}
+.chart-title{font-size:12px;color:var(--muted);margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.chart-title::before{content:'';width:3px;height:13px;background:var(--accent);border-radius:2px}
+.chart-wrap{position:relative;height:200px}
+@media(min-width:600px){.chart-wrap{height:250px}}
+.legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:8px}
+.legend-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted)}
+.legend-dot{width:10px;height:3px;border-radius:2px}
+.sig-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.sig-item{background:var(--card2);border-radius:8px;padding:10px}
+.sig-name{font-size:10px;color:var(--muted);margin-bottom:4px}
+.sig-val{font-size:15px;font-weight:700}
+.sig-bar-wrap{margin-top:6px;height:4px;background:var(--border);border-radius:4px;overflow:hidden}
+.sig-bar{height:100%;border-radius:4px;transition:width .6s}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#222639;color:var(--text);padding:10px 20px;border-radius:20px;font-size:12px;z-index:999;opacity:0;transition:opacity .3s;pointer-events:none;border:1px solid var(--border);max-width:90vw;text-align:center}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+
+<div class="loading-screen" id="loadingScreen">
+  <div class="loading-logo">📊</div>
+  <div class="loading-title">台股分析儀表板</div>
+  <div class="loading-sub" id="loadingSub">首次載入約需 1~3 分鐘<br>之後會快取到本機，秒開</div>
+  <div class="loading-bar-wrap"><div class="loading-bar" id="loadingBar" style="width:3%"></div></div>
+  <div class="loading-label" id="loadingLabel">連線中...</div>
+  <div class="loading-err" id="loadingErr"></div>
+  <button class="retry-btn" id="retryBtn" style="display:none" onclick="startInit()">🔄 重試</button>
+</div>
+
+<header>
+  <h1>📊 台股儀表板</h1>
+  <span class="badge" id="mainBadge">載入中</span>
+</header>
+<div class="status-bar">
+  <span id="statUpdate">—</span>
+  <span id="statCount">—</span>
+  <span style="margin-left:auto;display:flex;gap:6px">
+    <button class="btn btn-success" onclick="updateRecent()">🔄 更新今日</button>
+    <button class="btn btn-ghost" onclick="clearAndReload()">🗑 重置</button>
+  </span>
+</div>
+<div class="controls">
+  <div class="range-btns">
+    <button class="range-btn" onclick="setRange(30,this)">1M</button>
+    <button class="range-btn" onclick="setRange(90,this)">3M</button>
+    <button class="range-btn" onclick="setRange(180,this)">6M</button>
+    <button class="range-btn active" onclick="setRange(365,this)">1Y</button>
+    <button class="range-btn" onclick="setRange(0,this)">全部</button>
+  </div>
+</div>
+<div class="cards">
+  <div class="card blue"><div class="card-label">加權指數</div><div class="card-value" id="kTWII">—</div><div class="card-change neutral" id="kTWIIc">—</div></div>
+  <div class="card green"><div class="card-label">融資維持率</div><div class="card-value" id="kMR">—</div><div class="card-change neutral" id="kMRc">—</div></div>
+  <div class="card yellow"><div class="card-label">融資餘額（億）</div><div class="card-value" id="kMB">—</div><div class="card-change neutral" id="kMBc">—</div></div>
+  <div class="card red"><div class="card-label">美國 VIX</div><div class="card-value" id="kVIX">—</div><div class="card-change neutral" id="kVIXc">—</div></div>
+</div>
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('charts',this)">📈 圖表</div>
+  <div class="tab" onclick="switchTab('overlay',this)">🔀 疊加</div>
+  <div class="tab" onclick="switchTab('signals',this)">🎯 指標</div>
+</div>
+<div class="tab-content active" id="tab-charts">
+  <div class="chart-card"><div class="chart-title">加權指數（TAIEX）</div><div class="chart-wrap"><canvas id="cTWII"></canvas></div><div class="legend"><span class="legend-item"><span class="legend-dot" style="background:var(--accent)"></span>指數</span><span class="legend-item"><span class="legend-dot" style="background:var(--yellow)"></span>MA5</span><span class="legend-item"><span class="legend-dot" style="background:var(--green)"></span>MA20</span><span class="legend-item"><span class="legend-dot" style="background:var(--red)"></span>MA60</span></div></div>
+  <div class="chart-card"><div class="chart-title">融資維持率 (%)</div><div class="chart-wrap"><canvas id="cMR"></canvas></div></div>
+  <div class="chart-card"><div class="chart-title">融資餘額（億元）</div><div class="chart-wrap"><canvas id="cMB"></canvas></div></div>
+  <div class="chart-card"><div class="chart-title">VIX — 美國 vs 台灣波動率</div><div class="chart-wrap"><canvas id="cVIX"></canvas></div><div class="legend"><span class="legend-item"><span class="legend-dot" style="background:var(--red)"></span>美國VIX</span><span class="legend-item"><span class="legend-dot" style="background:var(--accent)"></span>台灣波動率</span></div></div>
+</div>
+<div class="tab-content" id="tab-overlay">
+  <div class="chart-card"><div class="chart-title">加權指數 ＋ 融資維持率</div><div class="chart-wrap" style="height:260px"><canvas id="cOv1"></canvas></div></div>
+  <div class="chart-card"><div class="chart-title">加權指數 ＋ VIX</div><div class="chart-wrap" style="height:260px"><canvas id="cOv2"></canvas></div></div>
+  <div class="chart-card"><div class="chart-title">融資餘額 ＋ 維持率</div><div class="chart-wrap" style="height:260px"><canvas id="cOv3"></canvas></div></div>
+</div>
+<div class="tab-content" id="tab-signals">
+  <div class="chart-card">
+    <div class="chart-title">量化指標面板</div>
+    <div class="sig-grid">
+      <div class="sig-item"><div class="sig-name">指數位置（52週）</div><div class="sig-val" id="s1">—</div><div class="sig-bar-wrap"><div class="sig-bar" id="sb1" style="width:0%;background:var(--accent)"></div></div></div>
+      <div class="sig-item"><div class="sig-name">融資維持率</div><div class="sig-val" id="s2">—</div><div class="sig-bar-wrap"><div class="sig-bar" id="sb2" style="width:0%;background:var(--green)"></div></div></div>
+      <div class="sig-item"><div class="sig-name">融資餘額偏離均值</div><div class="sig-val" id="s3">—</div><div class="sig-bar-wrap"><div class="sig-bar" id="sb3" style="width:50%;background:var(--yellow)"></div></div></div>
+      <div class="sig-item"><div class="sig-name">VIX 水位</div><div class="sig-val" id="s4">—</div><div class="sig-bar-wrap"><div class="sig-bar" id="sb4" style="width:0%;background:var(--red)"></div></div></div>
+      <div class="sig-item"><div class="sig-name">TWII 20日乖離率</div><div class="sig-val" id="s5">—</div><div class="sig-bar-wrap"><div class="sig-bar" id="sb5" style="width:50%;background:var(--accent)"></div></div></div>
+      <div class="sig-item"><div class="sig-name">融資維持率 5日趨勢</div><div class="sig-val" id="s6">—</div><div class="sig-bar-wrap"><div class="sig-bar" id="sb6" style="width:50%;background:var(--green)"></div></div></div>
+    </div>
+  </div>
+  <div class="chart-card"><div class="chart-title">融資維持率分佈</div><div class="chart-wrap"><canvas id="cHist"></canvas></div></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ── Config ────────────────────────────────────────────────────
+const TOKEN = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJkYXRlIjoiMjAyNi0wMy0zMCAwMTo1MDozNyIsInVzZXJfaWQiOiJCYWkiLCJpcCI6IjU5LjEyNi41Mi4yMzQiLCJleHAiOjE3NzU0MTE0Mzd9.wDQk1c-eNEmVdUAMrjujhNzMbOIFVCSrnazYrndEdRQ';
+const FM = 'https://api.finmindtrade.com/api/v4/data';
+const DB_NAME = 'twstock_db';
+const DB_VER = 1;
+
+let DB = { twii:[], margin:[], vix:[] };
+let currentRange = 365;
+let idb = null;
+const CH = {};
+
+// ── IndexedDB（本機儲存，無限量）────────────────────────────
+function openDB() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      ['twii','margin','vix','meta'].forEach(s => {
+        if (!db.objectStoreNames.contains(s)) db.createObjectStore(s, { keyPath: 'date' });
+      });
+      if (!db.objectStoreNames.contains('meta_kv')) db.createObjectStore('meta_kv', { keyPath: 'key' });
+    };
+    req.onsuccess = e => res(e.target.result);
+    req.onerror = e => rej(e.target.error);
+  });
+}
+
+function idbPut(store, records) {
+  return new Promise((res, rej) => {
+    const tx = idb.transaction(store, 'readwrite');
+    const st = tx.objectStore(store);
+    records.forEach(r => st.put(r));
+    tx.oncomplete = () => res();
+    tx.onerror = e => rej(e.target.error);
+  });
+}
+
+function idbGetAll(store) {
+  return new Promise((res, rej) => {
+    const tx = idb.transaction(store, 'readonly');
+    const req = tx.objectStore(store).getAll();
+    req.onsuccess = e => res(e.target.result);
+    req.onerror = e => rej(e.target.error);
+  });
+}
+
+function idbSetMeta(key, val) {
+  return new Promise((res, rej) => {
+    const tx = idb.transaction('meta_kv', 'readwrite');
+    tx.objectStore('meta_kv').put({ key, val });
+    tx.oncomplete = () => res();
+    tx.onerror = e => rej(e.target.error);
+  });
+}
+
+function idbGetMeta(key) {
+  return new Promise((res, rej) => {
+    const tx = idb.transaction('meta_kv', 'readonly');
+    const req = tx.objectStore('meta_kv').get(key);
+    req.onsuccess = e => res(e.target.result?.val || null);
+    req.onerror = e => rej(e.target.error);
+  });
+}
+
+function idbClear(store) {
+  return new Promise((res, rej) => {
+    const tx = idb.transaction(store, 'readwrite');
+    tx.objectStore(store).clear();
+    tx.oncomplete = () => res();
+    tx.onerror = e => rej(e.target.error);
+  });
+}
+
+// ── FinMind API ───────────────────────────────────────────────
+function withTimeout(promise, ms, msg) {
+  return Promise.race([
+    promise,
+    new Promise((_, rej) => setTimeout(() => rej(new Error(msg || `請求逾時 (${ms/1000}秒)`)), ms))
+  ]);
+}
+
+async function fmGet(dataset, dataId, start, end) {
+  const p = new URLSearchParams({ dataset, start_date: start, token: TOKEN });
+  if (dataId) p.set('data_id', dataId);
+  if (end) p.set('end_date', end);
+  try {
+    const res = await withTimeout(
+      fetch(`${FM}?${p}`, { mode: 'cors', headers: { 'Accept': 'application/json' } }),
+      25000, '連線逾時，請確認網路後重試'
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const j = await res.json();
+    if (j.status !== 200) throw new Error(`FinMind錯誤: ${j.msg || j.detail || JSON.stringify(j).slice(0,200)}`);
+    return j.data || [];
+  } catch(e) { throw e; }
+}
+
+async function fetchTWII(start, end) {
+  const rows = await fmGet('TaiwanStockPrice', 'TAIEX', start, end);
+  return rows.map(r => ({ date: r.date, close: parseFloat(r.close) })).filter(r => !isNaN(r.close));
+}
+
+async function fetchMargin(start, end) {
+  // 嘗試多個可能的 dataset 名稱
+  const datasets = [
+    'TaiwanStockTotalMarginPurchaseShortSale',
+    'TaiwanMarginPurchaseShortSale',
+    'TaiwanStockMarginPurchaseShortSale'
+  ];
+  for (const ds of datasets) {
+    try {
+      const rows = await fmGet(ds, null, start, end);
+      if (!rows.length) continue;
+      // 印出第一筆看欄位名稱
+      console.log(`Margin dataset [${ds}] fields:`, Object.keys(rows[0]));
+      const mapped = rows.map(r => ({
+        date: r.date,
+        maintainRate: parseFloat(
+          r.MarginMaintainaceRatio ?? r.margin_maintain_ratio ??
+          r.MaintainRatio ?? r.maintain_ratio ?? 0
+        ),
+        marginBalance: parseFloat(
+          r.MarginPurchaseRemainingAmount ?? r.margin_purchase_remaining_amount ??
+          r.marginBalance ?? r.margin_balance ?? 0
+        )
+      })).filter(r => r.maintainRate > 0);
+      if (mapped.length) return mapped;
+    } catch(e) { console.warn(ds, e.message); }
+  }
+  return [];
+}
+
+async function fetchVIX(start, end) {
+  const p1 = Math.floor(new Date(start).getTime()/1000);
+  const p2 = Math.floor(new Date(end||Date.now()).getTime()/1000) + 86400;
+  try {
+    const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&period1=${p1}&period2=${p2}`);
+    const d = await res.json();
+    const ch = d?.chart?.result?.[0];
+    if (!ch) return [];
+    const ts = ch.timestamp, closes = ch.indicators?.quote?.[0]?.close;
+    return ts.map((t,i) => ({
+      date: new Date(t*1000).toISOString().split('T')[0],
+      vix: closes[i] ? parseFloat(closes[i].toFixed(2)) : null,
+      twvix: null
+    })).filter(r => r.vix);
+  } catch(e) { return []; }
+}
+
+function calcTWVIX(twii) {
+  const map = {};
+  for (let i = 21; i < twii.length; i++) {
+    const w = twii.slice(i-20, i);
+    const rets = w.map((p,j) => j>0 ? Math.log(p.close/w[j-1].close) : null).filter(Boolean);
+    if (!rets.length) continue;
+    const mean = rets.reduce((a,b)=>a+b,0)/rets.length;
+    const std = Math.sqrt(rets.reduce((a,b)=>a+(b-mean)**2,0)/rets.length);
+    map[twii[i].date] = parseFloat((std*Math.sqrt(252)*100).toFixed(2));
+  }
+  return map;
+}
+
+// ── Init ──────────────────────────────────────────────────────
+async function startInit() {
+  document.getElementById('loadingErr').classList.remove('show');
+  document.getElementById('retryBtn').style.display = 'none';
+  document.getElementById('loadingScreen').classList.remove('hidden');
+  setProg(3, '連線 FinMind...');
+
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const start = '2015-01-01';
+
+    // 分段抓加權指數（每次3年）
+    let allTWII = [];
+    // 先測試 API 是否可用
+    setProg(5, '測試 API 連線...');
+    const testRows = await fetchTWII('2025-01-01', '2025-01-31');
+    if (!testRows.length) throw new Error('API 連線失敗或無資料\n\n可能原因：\n• 從本地 file:// 開啟時瀏覽器擋掉跨域請求\n\n解決方式：\n請用 Chrome 開啟，網址列應顯示 file:///...\n若還是失敗，請改用 Edge 瀏覽器試試');
+
+    const years = [[2015,2017],[2018,2020],[2021,2023],[2024, new Date().getFullYear()]];
+    for (let i=0; i<years.length; i++) {
+      const [y1, y2] = years[i];
+      setProg(5 + i*15, `下載加權指數 ${y1}～${y2}...`);
+      try {
+        const chunk = await fetchTWII(`${y1}-01-01`, `${y2}-12-31`);
+        allTWII = allTWII.concat(chunk);
+      } catch(e) { console.warn(e); }
+      await sleep(400);
+    }
+    if (!allTWII.length) throw new Error('加權指數資料為空\n請確認手機網路正常，或稍後再試');
+
+    // 分段抓融資
+    let allMargin = [];
+    for (let i=0; i<years.length; i++) {
+      const [y1, y2] = years[i];
+      setProg(65 + i*5, `下載融資資料 ${y1}～${y2}...`);
+      try {
+        const chunk = await fetchMargin(`${y1}-01-01`, `${y2}-12-31`);
+        allMargin = allMargin.concat(chunk);
+      } catch(e) { console.warn(e); }
+      await sleep(400);
+    }
+
+    setProg(85, '下載 VIX...');
+    const allVIXraw = await fetchVIX('2015-01-01', today);
+    const volMap = calcTWVIX(allTWII);
+    const allVIX = allVIXraw.map(r => ({ ...r, twvix: volMap[r.date] || null }));
+
+    // 排序去重
+    const dedup = arr => { const s=new Set(); return arr.filter(r=>{ if(s.has(r.date))return false; s.add(r.date); return true; }).sort((a,b)=>a.date.localeCompare(b.date)); };
+    DB.twii   = dedup(allTWII);
+    DB.margin = dedup(allMargin);
+    DB.vix    = dedup(allVIX);
+
+    setProg(93, '存入本機資料庫...');
+    await idbClear('twii');   await idbPut('twii',   DB.twii);
+    await idbClear('margin'); await idbPut('margin', DB.margin);
+    await idbClear('vix');    await idbPut('vix',    DB.vix);
+    await idbSetMeta('lastUpdate', today);
+    await idbSetMeta('counts', `${DB.twii.length},${DB.margin.length},${DB.vix.length}`);
+
+    setProg(100, '完成！');
+    await sleep(400);
+    document.getElementById('loadingScreen').classList.add('hidden');
+    updateUI();
+    toast(`✅ 加權 ${DB.twii.length} 筆 | 融資 ${DB.margin.length} 筆 | VIX ${DB.vix.length} 筆`);
+  } catch(err) {
+    const el = document.getElementById('loadingErr');
+    el.textContent = '❌ ' + err.message;
+    el.classList.add('show');
+    document.getElementById('retryBtn').style.display = 'block';
+  }
+}
+
+async function updateRecent() {
+  toast('🔄 更新中...');
+  const today = new Date().toISOString().split('T')[0];
+  const weekAgo = new Date(Date.now()-10*864e5).toISOString().split('T')[0];
+  try {
+    const [nT, nM, nV] = await Promise.all([
+      fetchTWII(weekAgo, today),
+      fetchMargin(weekAgo, today),
+      fetchVIX(weekAgo, today)
+    ]);
+    const patch = (base, news) => {
+      const m = {}; base.forEach(r=>m[r.date]=r); news.forEach(r=>m[r.date]={...m[r.date],...r});
+      return Object.values(m).sort((a,b)=>a.date.localeCompare(b.date));
+    };
+    const volMap = calcTWVIX(DB.twii);
+    DB.twii   = patch(DB.twii, nT);
+    DB.margin = patch(DB.margin, nM);
+    DB.vix    = patch(DB.vix, nV.map(r=>({...r,twvix:volMap[r.date]||null})));
+    await idbPut('twii', nT); await idbPut('margin', nM); await idbPut('vix', nV);
+    await idbSetMeta('lastUpdate', today);
+    updateUI(); toast('✅ 更新完成！');
+  } catch(e) { toast('❌ 更新失敗：'+e.message); }
+}
+
+async function clearAndReload() {
+  if (!confirm('清除本機資料並重新下載？')) return;
+  await Promise.all(['twii','margin','vix','meta_kv'].map(s => idbClear(s)));
+  DB = { twii:[], margin:[], vix:[] };
+  startInit();
+}
+
+// ── UI Helpers ────────────────────────────────────────────────
+function setProg(p,l){ document.getElementById('loadingBar').style.width=p+'%'; document.getElementById('loadingLabel').textContent=l; }
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+function updateUI() {
+  updateKPI(); renderAll();
+  const last = DB.twii[DB.twii.length-1];
+  document.getElementById('statUpdate').textContent = `最新：${last?.date||'—'}`;
+  document.getElementById('statCount').textContent  = `加權 ${DB.twii.length} | 融資 ${DB.margin.length} | VIX ${DB.vix.length}`;
+  document.getElementById('mainBadge').textContent  = '已更新';
+  document.getElementById('mainBadge').className    = 'badge ok';
+}
+
+function updateKPI() {
+  const last=a=>a[a.length-1], prev=a=>a[a.length-2];
+  const fmt=v=>v!=null?v.toLocaleString('zh-TW',{minimumFractionDigits:2,maximumFractionDigits:2}):'—';
+  const setCard=(vid,cid,v,p,unit='')=>{
+    document.getElementById(vid).textContent=v!=null?fmt(v)+unit:'—';
+    if(p!=null&&v!=null){const d=v-p,pct=(d/Math.abs(p)*100).toFixed(2);const el=document.getElementById(cid);el.textContent=`${d>=0?'+':''}${fmt(d)} (${pct}%)`;el.className=`card-change ${d>0?'up':d<0?'down':'neutral'}`;}
+  };
+  if(DB.twii.length){const l=last(DB.twii),p=prev(DB.twii);setCard('kTWII','kTWIIc',l?.close,p?.close);}
+  if(DB.margin.length){const l=last(DB.margin),p=prev(DB.margin);setCard('kMR','kMRc',l?.maintainRate,p?.maintainRate,'%');if(l?.marginBalance)setCard('kMB','kMBc',+(l.marginBalance/1e8).toFixed(1),p?.marginBalance?+(p.marginBalance/1e8).toFixed(1):null);}
+  if(DB.vix.length){const vd=DB.vix.filter(d=>d.vix);const l=vd[vd.length-1],p=vd[vd.length-2];setCard('kVIX','kVIXc',l?.vix,p?.vix);}
+}
+
+// ── Charts ────────────────────────────────────────────────────
+function mkChart(id,type,labels,datasets,extra={}) {
+  const ctx=document.getElementById(id)?.getContext('2d'); if(!ctx)return;
+  if(CH[id])CH[id].destroy();
+  CH[id]=new Chart(ctx,{type,data:{labels,datasets},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{backgroundColor:'#1a1d27',borderColor:'#2a2d3e',borderWidth:1,titleColor:'#8b90a0',bodyColor:'#e8eaf0',padding:10}},scales:{x:{grid:{color:'#2a2d3e22'},ticks:{color:'#8b90a0',maxTicksLimit:6,maxRotation:0,font:{size:10}}},y:{grid:{color:'#2a2d3e44'},ticks:{color:'#8b90a0',font:{size:10}}},...extra}}});
+}
+const dsL=(l,d,c,f=false,y='y')=>({label:l,data:d,borderColor:c,backgroundColor:f?c+'22':'transparent',borderWidth:1.5,pointRadius:0,tension:0.2,fill:f,yAxisID:y});
+const lbl=arr=>arr.map(d=>d.date); // 完整 yyyy-mm-dd
+const ma=(arr,n)=>arr.map((v,i)=>{if(i<n-1)return null;return arr.slice(i-n+1,i+1).reduce((a,b)=>a+b,0)/n;});
+const align=(base,ref,key)=>base.map(d=>{const r=ref.find(x=>x.date===d.date);return r?r[key]:null;});
+const dual=(c1,c2)=>({y:{grid:{color:'#2a2d3e44'},ticks:{color:c1,font:{size:10}},position:'left'},y2:{grid:{display:false},ticks:{color:c2,font:{size:9}},position:'right'},x:{grid:{color:'#2a2d3e22'},ticks:{color:'#8b90a0',maxTicksLimit:6,maxRotation:0,font:{size:10}}}});
+
+function getF(arr){if(!currentRange||!arr.length)return arr;const cut=new Date();cut.setDate(cut.getDate()-currentRange);return arr.filter(r=>r.date>=cut.toISOString().split('T')[0]);}
+
+function renderAll(){
+  if(!DB.twii.length)return;
+  const tw=getF(DB.twii),mg=getF(DB.margin),vx=getF(DB.vix),cl=tw.map(d=>d.close);
+  mkChart('cTWII','line',lbl(tw),[dsL('指數',cl,'#4f8ef7',true),dsL('MA5',ma(cl,5),'#f7c948'),dsL('MA20',ma(cl,20),'#26d97f'),dsL('MA60',ma(cl,60),'#f7525f')]);
+  if(mg.length){mkChart('cMR','line',lbl(mg),[dsL('維持率',mg.map(d=>d.maintainRate),'#26d97f',true)]);mkChart('cMB','line',lbl(mg),[dsL('餘額',mg.map(d=>d.marginBalance?+(d.marginBalance/1e8).toFixed(1):null),'#f7c948',true)]);}
+  if(vx.length)mkChart('cVIX','line',lbl(vx),[dsL('美VIX',vx.map(d=>d.vix||null),'#f7525f'),dsL('台波動',vx.map(d=>d.twvix||null),'#4f8ef7')]);
+  if(tw.length&&mg.length)mkChart('cOv1','line',lbl(tw),[dsL('加權',cl,'#4f8ef7',false,'y'),dsL('維持率',align(tw,mg,'maintainRate'),'#26d97f',false,'y2')],dual('#4f8ef7','#26d97f'));
+  if(tw.length&&vx.length)mkChart('cOv2','line',lbl(tw),[dsL('加權',cl,'#4f8ef7',false,'y'),dsL('VIX',align(tw,vx,'vix'),'#f7525f',false,'y2')],dual('#4f8ef7','#f7525f'));
+  if(mg.length)mkChart('cOv3','line',lbl(mg),[dsL('餘額',mg.map(d=>d.marginBalance?+(d.marginBalance/1e8).toFixed(1):null),'#f7c948',false,'y'),dsL('維持率',mg.map(d=>d.maintainRate),'#26d97f',false,'y2')],dual('#f7c948','#26d97f'));
+  updateSignals(tw,mg,vx,cl); renderHist();
+}
+
+function setSig(v,b,t,p,c){const e=document.getElementById(v),bar=document.getElementById(b);if(e)e.textContent=t;if(bar){bar.style.width=Math.max(0,Math.min(100,p))+'%';bar.style.background=c;}}
+function updateSignals(tw,mg,vx,cl){
+  if(DB.twii.length>=2){const l252=DB.twii.slice(-252);const hi=Math.max(...l252.map(d=>d.close)),lo=Math.min(...l252.map(d=>d.close));const lc=cl[cl.length-1];setSig('s1','sb1',`${((lc-lo)/(hi-lo)*100).toFixed(1)}%`,(lc-lo)/(hi-lo)*100,'var(--accent)');if(cl.length>=20){const m20=cl.slice(-21,-1).reduce((a,b)=>a+b,0)/20;const bias=(lc-m20)/m20*100;setSig('s5','sb5',`${bias>=0?'+':''}${bias.toFixed(2)}%`,50+bias*3,'var(--accent)');}}
+  if(DB.margin.length){const lm=DB.margin[DB.margin.length-1];const mr=lm?.maintainRate;setSig('s2','sb2',mr?`${mr.toFixed(2)}%`:'—',mr?Math.min((mr-100)/150*100,100):0,'var(--green)');const mb60=DB.margin.slice(-60).map(d=>d.marginBalance).filter(Boolean);if(mb60.length>5){const avg=mb60.reduce((a,b)=>a+b,0)/mb60.length;const dev=(mb60[mb60.length-1]-avg)/avg*100;setSig('s3','sb3',`${dev>=0?'+':''}${dev.toFixed(1)}%`,50+dev,'var(--yellow)');}if(DB.margin.length>=5){const l5=DB.margin.slice(-5).map(d=>d.maintainRate).filter(Boolean);if(l5.length>=2){const t=l5[l5.length-1]-l5[0];setSig('s6','sb6',`${t>=0?'↑':'↓'} ${Math.abs(t).toFixed(2)}%`,50+t*5,t>=0?'var(--green)':'var(--red)');}}}
+  if(DB.vix.length){const lv=DB.vix.filter(d=>d.vix);const v=lv[lv.length-1]?.vix;const p=Math.min((v||0)/60*100,100);setSig('s4','sb4',v?v.toFixed(2):'—',p,p>50?'var(--red)':'var(--yellow)');}
+}
+function renderHist(){
+  const yr=getF(DB.margin).map(d=>d.maintainRate).filter(Boolean);if(!yr.length)return;
+  const mn=Math.min(...yr),mx=Math.max(...yr),bins=20,step=(mx-mn)/bins;
+  const counts=Array(bins).fill(0);yr.forEach(v=>{counts[Math.min(Math.floor((v-mn)/step),bins-1)]++;});
+  const ctx=document.getElementById('cHist')?.getContext('2d');if(!ctx)return;
+  if(CH['cHist'])CH['cHist'].destroy();
+  CH['cHist']=new Chart(ctx,{type:'bar',data:{labels:Array.from({length:bins},(_,i)=>`${(mn+i*step).toFixed(0)}%`),datasets:[{data:counts,backgroundColor:'#4f8ef733',borderColor:'#4f8ef7',borderWidth:1}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#8b90a0',font:{size:9},maxRotation:45}},y:{ticks:{color:'#8b90a0',font:{size:9}}}}}});
+}
+
+function setRange(d,btn){currentRange=d;document.querySelectorAll('.range-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderAll();}
+function switchTab(id,el){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));el.classList.add('active');document.getElementById('tab-'+id).classList.add('active');renderAll();}
+function toast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),3500);}
+
+// ── Boot ──────────────────────────────────────────────────────
+(async () => {
+  try {
+    idb = await openDB();
+    const lastUpdate = await idbGetMeta('lastUpdate');
+    if (lastUpdate) {
+      setProg(20, '讀取本機資料庫...');
+      DB.twii   = (await idbGetAll('twii')).sort((a,b)=>a.date.localeCompare(b.date));
+      DB.margin = (await idbGetAll('margin')).sort((a,b)=>a.date.localeCompare(b.date));
+      DB.vix    = (await idbGetAll('vix')).sort((a,b)=>a.date.localeCompare(b.date));
+      if (DB.twii.length) {
+        setProg(100, '完成！');
+        await sleep(300);
+        document.getElementById('loadingScreen').classList.add('hidden');
+        updateUI();
+        toast(`✅ 本機資料載入（${lastUpdate}），可點「更新今日」取得最新`);
+        return;
+      }
+    }
+    await startInit();
+  } catch(e) {
+    document.getElementById('loadingErr').textContent = '啟動失敗：'+e.message;
+    document.getElementById('loadingErr').classList.add('show');
+    document.getElementById('retryBtn').style.display = 'block';
+  }
+})();
+</script>
+</body>
+</html>
