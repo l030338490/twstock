@@ -241,51 +241,63 @@ async function fetchTWII(start, end) {
   return rows.map(r => ({ date: r.date, close: parseFloat(r.close) })).filter(r => !isNaN(r.close));
 }
 
+// 融資維持率 — 直接從 TWSE 證交所抓（免費無需帳號）
 async function fetchMargin(start, end) {
-  // 嘗試多個可能的 dataset 名稱
-  const datasets = [
-    'TaiwanStockTotalMarginPurchaseShortSale',
-    'TaiwanMarginPurchaseShortSale',
-    'TaiwanStockMarginPurchaseShortSale'
-  ];
-  for (const ds of datasets) {
+  const startD = new Date(start), endD = new Date(end || Date.now());
+  let all = [];
+  // 逐月抓取
+  let cur = new Date(startD.getFullYear(), startD.getMonth(), 1);
+  while (cur <= endD) {
+    const y = cur.getFullYear();
+    const m = String(cur.getMonth()+1).padStart(2,'0');
+    const dateStr = `${y}${m}01`;
     try {
-      const rows = await fmGet(ds, null, start, end);
-      if (!rows.length) continue;
-      // 印出第一筆看欄位名稱
-      console.log(`Margin dataset [${ds}] fields:`, Object.keys(rows[0]));
-      const mapped = rows.map(r => ({
-        date: r.date,
-        maintainRate: parseFloat(
-          r.MarginMaintainaceRatio ?? r.margin_maintain_ratio ??
-          r.MaintainRatio ?? r.maintain_ratio ?? 0
-        ),
-        marginBalance: parseFloat(
-          r.MarginPurchaseRemainingAmount ?? r.margin_purchase_remaining_amount ??
-          r.marginBalance ?? r.margin_balance ?? 0
-        )
-      })).filter(r => r.maintainRate > 0);
-      if (mapped.length) return mapped;
-    } catch(e) { console.warn(ds, e.message); }
+      const res = await withTimeout(
+        fetch(`https://www.twse.com.tw/rwd/zh/marginTrading/MI_MARGN?date=${dateStr}&selectType=MS&response=json`),
+        15000, '逾時'
+      );
+      const json = await res.json();
+      const rows = json?.data || [];
+      rows.forEach(row => {
+        if (!row || !row[0] || !row[0].includes('/')) return;
+        const pts = row[0].split('/');
+        if (pts.length !== 3) return;
+        const date = `${parseInt(pts[0])+1911}-${pts[1]}-${pts[2]}`;
+        const mr = parseFloat(String(row[row.length-1]).replace(/,/g,''));
+        const mb = parseFloat(String(row[2]).replace(/,/g,''));
+        if (!isNaN(mr) && mr > 0) all.push({ date, maintainRate: mr, marginBalance: isNaN(mb)?0:mb });
+      });
+    } catch(e) { console.warn(`Margin ${y}/${m}:`, e.message); }
+    cur.setMonth(cur.getMonth()+1);
+    await sleep(200);
   }
-  return [];
+  return all;
 }
 
+// VIX — Yahoo Finance
 async function fetchVIX(start, end) {
   const p1 = Math.floor(new Date(start).getTime()/1000);
   const p2 = Math.floor(new Date(end||Date.now()).getTime()/1000) + 86400;
-  try {
-    const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&period1=${p1}&period2=${p2}`);
-    const d = await res.json();
-    const ch = d?.chart?.result?.[0];
-    if (!ch) return [];
-    const ts = ch.timestamp, closes = ch.indicators?.quote?.[0]?.close;
-    return ts.map((t,i) => ({
-      date: new Date(t*1000).toISOString().split('T')[0],
-      vix: closes[i] ? parseFloat(closes[i].toFixed(2)) : null,
-      twvix: null
-    })).filter(r => r.vix);
-  } catch(e) { return []; }
+  const urls = [
+    `https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&period1=${p1}&period2=${p2}`,
+    `https://query2.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&period1=${p1}&period2=${p2}`
+  ];
+  for (const url of urls) {
+    try {
+      const res = await withTimeout(fetch(url), 15000, '逾時');
+      const d = await res.json();
+      const ch = d?.chart?.result?.[0];
+      if (!ch) continue;
+      const ts = ch.timestamp, closes = ch.indicators?.quote?.[0]?.close;
+      const result = ts.map((t,i) => ({
+        date: new Date(t*1000).toISOString().split('T')[0],
+        vix: closes[i] ? parseFloat(closes[i].toFixed(2)) : null,
+        twvix: null
+      })).filter(r => r.vix);
+      if (result.length) return result;
+    } catch(e) { console.warn('VIX:', e.message); }
+  }
+  return [];
 }
 
 function calcTWVIX(twii) {
