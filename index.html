@@ -241,7 +241,11 @@ async function fetchTWII(start, end) {
   return rows.map(r => ({ date: r.date, close: parseFloat(r.close) })).filter(r => !isNaN(r.close));
 }
 
-// 融資維持率 — TWSE（每月嘗試多個日期避開假日）
+// 融資餘額 — TWSE MI_MARGN selectType=MS
+// tables[0].data 結構：
+//   [0] 融資(交易單位)：買進,賣出,現金償還,前日餘額,今日餘額
+//   [1] 融券(交易單位)
+//   [2] 融資金額(仟元)：買進,賣出,現金償還,前日餘額,今日餘額
 async function fetchMargin(start, end) {
   const startD = new Date(start), endD = new Date(end || Date.now());
   let all = [];
@@ -249,9 +253,7 @@ async function fetchMargin(start, end) {
   while (cur <= endD) {
     const y = cur.getFullYear();
     const m = String(cur.getMonth()+1).padStart(2,'0');
-    // 嘗試當月 01, 02, 03, 05 避開假日
-    const tries = ['01','02','03','04','05','06','07','08','09','10'];
-    let got = false;
+    const tries = ['02','03','04','05','06','07','08','09','10','11','12','13','14','15'];
     for (const dd of tries) {
       const dateStr = `${y}${m}${dd}`;
       try {
@@ -260,25 +262,43 @@ async function fetchMargin(start, end) {
           15000, '逾時'
         );
         const json = await res.json();
-        if (json.stat && json.stat.includes('沒有')) { await sleep(150); continue; }
-        const rows = json?.data || [];
-        if (!rows.length) { await sleep(150); continue; }
-        rows.forEach(row => {
-          if (!row || !row[0] || !String(row[0]).includes('/')) return;
-          const pts = String(row[0]).split('/');
-          if (pts.length !== 3) return;
-          const date = `${parseInt(pts[0])+1911}-${pts[1]}-${pts[2]}`;
-          const mr = parseFloat(String(row[row.length-1]).replace(/,/g,''));
-          const mb = parseFloat(String(row[2]).replace(/,/g,''));
-          if (!isNaN(mr) && mr > 0) all.push({ date, maintainRate: mr, marginBalance: isNaN(mb)?0:mb });
-        });
-        got = true;
-        break;
-      } catch(e) { await sleep(150); }
+        if (json.stat !== 'OK') { await sleep(100); continue; }
+        const tables = json.tables || [];
+        const t0 = tables[0];
+        if (!t0 || !t0.data || t0.data.length < 3) { await sleep(100); continue; }
+
+        // 逐日資料都在同一個月份回應內
+        // data[2] = 融資金額(仟元) 的各欄
+        // fields: 項目,買進,賣出,現金償還,前日餘額,今日餘額
+        // 但 MI_MARGN 每次只回一天，所以直接取 data[2][5] = 今日餘額
+        const marginMoneyRow = t0.data[2]; // 融資金額(仟元)
+        const marginUnitRow  = t0.data[0]; // 融資(交易單位)
+        const shortUnitRow   = t0.data[1]; // 融券(交易單位)
+
+        const toNum = s => parseFloat(String(s).replace(/,/g,'')) || 0;
+
+        // 取得該日期（從 json.date 欄位）
+        const d = json.date; // "20250103"
+        if (!d || d.length !== 8) { await sleep(100); continue; }
+        const dateAD = `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}`;
+
+        const marginBalance = toNum(marginMoneyRow[5]); // 今日餘額(仟元)
+        const marginUnit    = toNum(marginUnitRow[5]);  // 今日餘額(張)
+        const shortUnit     = toNum(shortUnitRow[5]);   // 融券今日餘額(張)
+
+        if (marginBalance > 0) {
+          all.push({
+            date: dateAD,
+            marginBalance,   // 仟元
+            marginUnit,
+            shortUnit
+          });
+        }
+        break; // 成功就跳出 tries 迴圈
+      } catch(e) { await sleep(100); }
     }
-    if (!got) console.warn(`Margin ${y}/${m}: 無資料`);
     cur.setMonth(cur.getMonth()+1);
-    await sleep(300);
+    await sleep(250);
   }
   return all;
 }
@@ -447,7 +467,15 @@ function updateKPI() {
     if(p!=null&&v!=null){const d=v-p,pct=(d/Math.abs(p)*100).toFixed(2);const el=document.getElementById(cid);el.textContent=`${d>=0?'+':''}${fmt(d)} (${pct}%)`;el.className=`card-change ${d>0?'up':d<0?'down':'neutral'}`;}
   };
   if(DB.twii.length){const l=last(DB.twii),p=prev(DB.twii);setCard('kTWII','kTWIIc',l?.close,p?.close);}
-  if(DB.margin.length){const l=last(DB.margin),p=prev(DB.margin);setCard('kMR','kMRc',l?.maintainRate,p?.maintainRate,'%');if(l?.marginBalance)setCard('kMB','kMBc',+(l.marginBalance/1e8).toFixed(1),p?.marginBalance?+(p.marginBalance/1e8).toFixed(1):null);}
+  if(DB.margin.length){
+    const l=last(DB.margin),p=prev(DB.margin);
+    // 融資餘額(億元)
+    const lb = +(l.marginBalance/1e5).toFixed(1); // 仟元→億元
+    const pb = p?.marginBalance ? +(p.marginBalance/1e5).toFixed(1) : null;
+    setCard('kMR','kMRc', lb, pb, '億');
+    // 融券餘額(張)
+    if(l.shortUnit != null) setCard('kMB','kMBc', l.shortUnit, p?.shortUnit);
+  }
   if(DB.vix.length){const vd=DB.vix.filter(d=>d.vix);const l=vd[vd.length-1],p=vd[vd.length-2];setCard('kVIX','kVIXc',l?.vix,p?.vix);}
 }
 
@@ -469,11 +497,18 @@ function renderAll(){
   if(!DB.twii.length)return;
   const tw=getF(DB.twii),mg=getF(DB.margin),vx=getF(DB.vix),cl=tw.map(d=>d.close);
   mkChart('cTWII','line',lbl(tw),[dsL('指數',cl,'#4f8ef7',true),dsL('MA5',ma(cl,5),'#f7c948'),dsL('MA20',ma(cl,20),'#26d97f'),dsL('MA60',ma(cl,60),'#f7525f')]);
-  if(mg.length){mkChart('cMR','line',lbl(mg),[dsL('維持率',mg.map(d=>d.maintainRate),'#26d97f',true)]);mkChart('cMB','line',lbl(mg),[dsL('餘額',mg.map(d=>d.marginBalance?+(d.marginBalance/1e8).toFixed(1):null),'#f7c948',true)]);}
+  // 卡片標籤更新
+  document.querySelector('.card.green .card-label').textContent = '融資餘額（億）';
+  document.querySelector('.card.yellow .card-label').textContent = '融券餘額（張）';
+
+  if(mg.length){
+    mkChart('cMR','line',lbl(mg),[dsL('融資餘額(億)',mg.map(d=>+(d.marginBalance/1e5).toFixed(1)),'#26d97f',true)]);
+    mkChart('cMB','line',lbl(mg),[dsL('融券餘額(張)',mg.map(d=>d.shortUnit||null),'#f7c948',true)]);
+  }
   if(vx.length)mkChart('cVIX','line',lbl(vx),[dsL('美VIX',vx.map(d=>d.vix||null),'#f7525f'),dsL('台波動',vx.map(d=>d.twvix||null),'#4f8ef7')]);
-  if(tw.length&&mg.length)mkChart('cOv1','line',lbl(tw),[dsL('加權',cl,'#4f8ef7',false,'y'),dsL('維持率',align(tw,mg,'maintainRate'),'#26d97f',false,'y2')],dual('#4f8ef7','#26d97f'));
+  if(tw.length&&mg.length)mkChart('cOv1','line',lbl(tw),[dsL('加權',cl,'#4f8ef7',false,'y'),dsL('融資餘額',align(tw,mg,'marginBalance').map(v=>v?+(v/1e5).toFixed(1):null),'#26d97f',false,'y2')],dual('#4f8ef7','#26d97f'));
   if(tw.length&&vx.length)mkChart('cOv2','line',lbl(tw),[dsL('加權',cl,'#4f8ef7',false,'y'),dsL('VIX',align(tw,vx,'vix'),'#f7525f',false,'y2')],dual('#4f8ef7','#f7525f'));
-  if(mg.length)mkChart('cOv3','line',lbl(mg),[dsL('餘額',mg.map(d=>d.marginBalance?+(d.marginBalance/1e8).toFixed(1):null),'#f7c948',false,'y'),dsL('維持率',mg.map(d=>d.maintainRate),'#26d97f',false,'y2')],dual('#f7c948','#26d97f'));
+  if(mg.length)mkChart('cOv3','line',lbl(mg),[dsL('融資餘額',mg.map(d=>+(d.marginBalance/1e5).toFixed(1)),'#f7c948',false,'y'),dsL('融券餘額',mg.map(d=>d.shortUnit||null),'#26d97f',false,'y2')],dual('#f7c948','#26d97f'));
   updateSignals(tw,mg,vx,cl); renderHist();
 }
 
