@@ -284,30 +284,53 @@ async function fetchMargin(start, end) {
   return all;
 }
 
-// VIX — Yahoo Finance
+// VIX — 用 stooq.com（支援 CORS）
 async function fetchVIX(start, end) {
-  const p1 = Math.floor(new Date(start).getTime()/1000);
-  const p2 = Math.floor(new Date(end||Date.now()).getTime()/1000) + 86400;
+  const startStr = start.replace(/-/g,'');
+  const endStr = (end || new Date().toISOString().split('T')[0]).replace(/-/g,'');
   const urls = [
-    `https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&period1=${p1}&period2=${p2}`,
-    `https://query2.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&period1=${p1}&period2=${p2}`
+    `https://stooq.com/q/d/l/?s=%5Evix&d1=${startStr}&d2=${endStr}&i=d`,
+    `https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&period1=${Math.floor(new Date(start).getTime()/1000)}&period2=${Math.floor(new Date(end||Date.now()).getTime()/1000)+86400}&events=history`
   ];
-  for (const url of urls) {
-    try {
-      const res = await withTimeout(fetch(url), 15000, '逾時');
-      const d = await res.json();
-      const ch = d?.chart?.result?.[0];
-      if (!ch) continue;
-      const ts = ch.timestamp, closes = ch.indicators?.quote?.[0]?.close;
-      const result = ts.map((t,i) => ({
-        date: new Date(t*1000).toISOString().split('T')[0],
-        vix: closes[i] ? parseFloat(closes[i].toFixed(2)) : null,
-        twvix: null
-      })).filter(r => r.vix);
-      if (result.length) return result;
-    } catch(e) { console.warn('VIX:', e.message); }
-  }
-  return [];
+
+  // 先試 stooq（CSV 格式，支援 CORS）
+  try {
+    const res = await withTimeout(fetch(urls[0]), 15000, '逾時');
+    const text = await res.text();
+    if (text && !text.includes('No data')) {
+      const lines = text.trim().split('\n');
+      const result = [];
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(',');
+        if (cols.length < 5) continue;
+        const date = cols[0]; // YYYY-MM-DD
+        const close = parseFloat(cols[4]);
+        if (date && !isNaN(close) && close > 0) {
+          result.push({ date, vix: close, twvix: null });
+        }
+      }
+      if (result.length > 0) {
+        console.log(`VIX from stooq: ${result.length} 筆`);
+        return result;
+      }
+    }
+  } catch(e) { console.warn('stooq VIX:', e.message); }
+
+  // 備援：Yahoo Finance
+  try {
+    const p1 = Math.floor(new Date(start).getTime()/1000);
+    const p2 = Math.floor(new Date(end||Date.now()).getTime()/1000) + 86400;
+    const res = await withTimeout(fetch(`https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&period1=${p1}&period2=${p2}`), 15000, '逾時');
+    const d = await res.json();
+    const ch = d?.chart?.result?.[0];
+    if (!ch) return [];
+    const ts = ch.timestamp, closes = ch.indicators?.quote?.[0]?.close;
+    return ts.map((t,i) => ({
+      date: new Date(t*1000).toISOString().split('T')[0],
+      vix: closes[i] ? parseFloat(closes[i].toFixed(2)) : null,
+      twvix: null
+    })).filter(r => r.vix);
+  } catch(e) { console.warn('Yahoo VIX:', e.message); return []; }
 }
 
 function calcTWVIX(twii) {
